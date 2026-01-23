@@ -43,76 +43,73 @@ class GoogleRobotPickPlaceEnv(gym.Env):
         ]).astype(np.float32)
 
     def step(self, action):
-        self.step_counter += 1
+            self.step_counter += 1
 
-        # Physics step (unchanged)
-        ctrl_range = self.model.actuator_ctrlrange
-        scaled_action = ctrl_range[:, 0] + (action + 1.0) * 0.5 * (ctrl_range[:, 1] - ctrl_range[:, 0])
-        self.data.ctrl[:] = scaled_action
-        for _ in range(5):
-            mujoco.mj_step(self.model, self.data)
+            # Physics step
+            ctrl_range = self.model.actuator_ctrlrange
+            scaled_action = ctrl_range[:, 0] + (action + 1.0) * 0.5 * (ctrl_range[:, 1] - ctrl_range[:, 0])
+            self.data.ctrl[:] = scaled_action
+            for _ in range(5):
+                mujoco.mj_step(self.model, self.data)
 
-        obs = self._get_obs()
+            obs = self._get_obs()
 
-        # 1. Extract state
-        gripper_pos = self.data.site_xpos[self.model.site("gripper").id].copy()
-        cube_pos = self.data.site_xpos[self.model.site("cube_site").id].copy()
-        gripper_mat = self.data.site_xmat[self.model.site("gripper").id].reshape(3, 3)
-        cube_mat = self.data.xmat[self.model.body("cube").id].reshape(3, 3)
+            # 1. State
+            gripper_pos = self.data.site_xpos[self.model.site("gripper").id].copy()
+            cube_pos = self.data.site_xpos[self.model.site("cube_site").id].copy()
+            gripper_mat = self.data.site_xmat[self.model.site("gripper").id].reshape(3, 3)
+            cube_mat = self.data.xmat[self.model.body("cube").id].reshape(3, 3)
 
-        # 2. Distance and Orientation Errors (Decoupled)
-        dist = np.linalg.norm(cube_pos - gripper_pos)
-        
-        # Gripper symmetry: A parallel gripper is the same if rotated 180 deg (Pi)
-        mirror_yz = np.diag([1, 1, 1])
-        target_mat = cube_mat @ mirror_yz
-        
-        r_err = R.from_matrix(target_mat.T @ gripper_mat)
-        angle_err = np.linalg.norm(r_err.as_rotvec()) 
+            # Gripper symmetry: A parallel gripper is the same if rotated 180 deg (Pi)
+            mirror_yz = np.diag([1, -1, -1])
+            target_mat = cube_mat @ mirror_yz
+    
+            # 2. Errors
+            dist = np.linalg.norm(cube_pos - gripper_pos)
+            r_err = R.from_matrix(target_mat.T @ gripper_mat)
+            angle_err = np.linalg.norm(r_err.as_rotvec()) 
 
-        # 3. Reward Components
-        # Reach: Smooth exponential reward (0 to 1)
-        reward_reach = np.exp(-5.0 * dist) 
-        
-        # Alignment
-        reward_align = 0.0
-        reward_contact = 0.0
-        if dist < 1.0:
-            reward_align = 0.5 * (np.exp(-angle_err))
-            # Reward the robot for closing the gripper (action[6]) when close to the cube
-            gripper_action = action[6]
-            if gripper_action > 0:  # If the robot is attempting to close
-                reward_contact = 0.2 * gripper_action
+            # 3. IMPROVED REWARD LOGIC
+            # 3a. Reach Reward: ALWAYS active, but stronger when aligned
+            # We use a 0.1 floor so moving toward the cube always outweighs the velocity penalty
+            reward_reach = 0.5 * np.exp(-5.0 * dist)
+            
+            # 3b. Align Reward: Stronger as the wrist turns correctly
+            reward_align = 0.5 * np.exp(-3.0 * angle_err)
+            
+            # 3c. Synergy: Bonus reward if we are BOTH close AND aligned
+            reward_combined = 0.0
+            if dist < 0.2 and angle_err < 0.5:
+                reward_combined = 2.0 * np.exp(-dist - angle_err)
 
-        # Grasping & Lifting
-        reward_pick = 0.0
-        has_contact = self._finger_cube_contact()
-        cube_height = cube_pos[2]
-        
-        if has_contact:
-            reward_pick += 2.0  # Bonus for touching
-            if cube_height > 0.04:  # Bonus for lifting
-                reward_pick += 10.0 + (50.0 * (cube_height - 0.02))
+            # 3d. Grasping (Indices 7 and 8)
+            reward_grasp = 0.0
+            if dist < 0.08 and angle_err < 0.3:
+                finger_right, finger_left = action[7], action[8]
+                if finger_right > 0 and finger_left > 0:
+                    reward_grasp = 0.2 * (finger_right + finger_left)
 
-        # Velocity Penalty (to encourage smooth actions)
-        velocity_penalty = -0.01 * np.linalg.norm(self.data.qvel)
+            # 3e. Lifting
+            reward_pick = 0.0
+            has_contact = self._finger_cube_contact()
+            if has_contact:
+                reward_pick += 1.0
+                if cube_pos[2] > 0.03:
+                    reward_pick += 10.0 + (50.0 * (cube_pos[2] - 0.02))
 
-        # Total Reward
-        reward = reward_reach + reward_align + reward_contact + reward_pick + velocity_penalty
+            # 3f. Penalty: Keep it very small
+            velocity_penalty = -0.005 * np.linalg.norm(self.data.qvel)
 
-        # 4. Termination logic
-        # Don't terminate just for being low; only if the robot falls over or fails critically
-        terminated = False 
-        # Optional: Terminate if cube falls off table
-        if cube_pos[2] < -0.05 or np.linalg.norm(cube_pos[:2]) > 1.0:
-            terminated = True
-            reward -= 10.0
+            reward = reward_reach + reward_align + reward_combined + reward_grasp + reward_pick + velocity_penalty
 
-        truncated = self.step_counter >= MAX_EPISODE_STEPS
+            # 4. Termination / Truncation
+            terminated = False 
+            if cube_pos[2] < -0.05 or np.linalg.norm(cube_pos[:2]) > 1.0:
+                terminated = True
+                reward -= 5.0
 
-        return obs, reward, terminated, truncated, {}
-
-
+            truncated = self.step_counter >= MAX_EPISODE_STEPS
+            return obs, reward, terminated, truncated, {}
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -123,7 +120,7 @@ class GoogleRobotPickPlaceEnv(gym.Env):
         cube_qpos_adr = int(self.model.joint("cube_joint").qposadr)  # safer: ensure int
 
         # spawn coordinates (x, y, z)
-        far_x = 0.4 + np.random.uniform(0, 0.2)   # X: 0.4 → 0.6
+        far_x = 0.2 + np.random.uniform(0, 0.2)   # X: 0.2 → 0.4
         random_y = -0.5 + np.random.uniform(0, 0.4)  # Y: -0.2 → 0.2
         z = 0.02
 
@@ -180,3 +177,21 @@ class GoogleRobotPickPlaceEnv(gym.Env):
                 return True
 
         return False
+    
+    def render(self):
+        if self.render_mode is None:
+            return
+
+        if self.render_mode == "human":
+            import mujoco.viewer
+            if not hasattr(self, 'viewer') or self.viewer is None:
+                # Launch the passive viewer
+                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+                
+                # OPTIONAL: Set default view parameters
+                self.viewer.cam.distance = 2.0
+                self.viewer.cam.azimuth = 90
+                self.viewer.cam.elevation = -30
+            
+            # Update the window with current physics state
+            self.viewer.sync()

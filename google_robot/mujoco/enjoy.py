@@ -1,5 +1,4 @@
 import time
-import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from google_robot_env import GoogleRobotPickPlaceEnv
