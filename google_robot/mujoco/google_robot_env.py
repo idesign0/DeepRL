@@ -72,11 +72,18 @@ class GoogleRobotPickPlaceEnv(gym.Env):
             # 3. IMPROVED REWARD LOGIC
             # 3a. Reach Reward: ALWAYS active, but stronger when aligned
             # We use a 0.1 floor so moving toward the cube always outweighs the velocity penalty
-            reward_reach = 0.5 * np.exp(-5.0 * dist)
+            reward_reach = 3.0*np.exp(-5.0 * dist)
             
             # 3b. Align Reward: Stronger as the wrist turns correctly
-            reward_align = 0.5 * np.exp(-3.0 * angle_err)
+            reward_align = np.exp(-angle_err)
             
+            # Distance penalty
+            reward_dist_penalty = -5.0*dist
+
+            reward_angle_penalty = 0.0
+            if dist < 0.3:
+                reward_angle_penalty = -1.0 * angle_err * (1.0 - dist/0.3)
+
             # 3c. Synergy: Bonus reward if we are BOTH close AND aligned
             reward_combined = 0.0
             if dist < 0.2 and angle_err < 0.5:
@@ -97,10 +104,7 @@ class GoogleRobotPickPlaceEnv(gym.Env):
                 if cube_pos[2] > 0.03:
                     reward_pick += 10.0 + (50.0 * (cube_pos[2] - 0.02))
 
-            # 3f. Penalty: Keep it very small
-            velocity_penalty = -0.005 * np.linalg.norm(self.data.qvel)
-
-            reward = reward_reach + reward_align + reward_combined + reward_grasp + reward_pick + velocity_penalty
+            reward = reward_dist_penalty + reward_angle_penalty + reward_reach + reward_align + reward_combined + reward_grasp + reward_pick
 
             # 4. Termination / Truncation
             terminated = False 
