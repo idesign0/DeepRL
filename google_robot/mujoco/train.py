@@ -9,8 +9,8 @@ from google_robot_env import GoogleRobotPickPlaceEnv
 SCENE_PATH = "/Users/dhruvpatel29/mujoco/google_robot/google_robot/scene.xml"
 
 # --- CONFIGURATION ---
-NUM_ENVS = 120        
-N_STEPS = 2048
+NUM_ENVS = 48        
+N_STEPS = 1024
 # One iteration is exactly 61,440 steps (30 * 2048)
 ITERATION_SIZE = NUM_ENVS * N_STEPS 
 TOTAL_TIMESTEPS = 2_000_000  
@@ -89,7 +89,7 @@ if __name__ == "__main__":
 
     # 5. Learn
     try:
-        model.learn(total_timesteps=TOTAL_TIMESTEPS)
+        model.learn(total_timesteps=TOTAL_TIMESTEPS,callback=render_callback)
     except KeyboardInterrupt:
         print("Stopped by user.")
 

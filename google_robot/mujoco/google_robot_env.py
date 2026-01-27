@@ -80,38 +80,53 @@ class GoogleRobotPickPlaceEnv(gym.Env):
 
             progress_dist = self.prev_dist - dist
             progress_ang = self.prev_ang - angle_err
-            reward_progress = 15.0 * progress_dist + 10.0 * progress_ang
+            reward_progress = 30.0 * progress_dist + 30.0 * progress_ang
             self.prev_dist = dist
             self.prev_ang = angle_err
 
+            if dist < 0.25:
+                reward_progress *= 0.5
+            
             # --- 2. REACH (NON-SATURATING) ---
             reward_reach = 1.5 / (dist + 0.05)
 
             # --- 3. ALIGN (ONLY WHEN CLOSE) ---
             reward_align = 0.0
-            if dist < 0.25:
-                reward_align = np.exp(-angle_err)
+            if dist < 1.0:
+                reward_align = 3.0*np.exp(-angle_err)
 
             # --- 4. SOFT DISTANCE PENALTY ---
-            reward_dist_penalty = -0.5 * dist * dist
+            penalty_dist = -0.5 * dist * dist
 
             # --- 5. GRASPING ---
             reward_finger = 0.0
-            if dist < 0.5 and angle_err < 0.1:
-                finger_right, finger_left = action[7], action[8]
-                reward_finger = 3 * (max(0.0, finger_right) + max(0.0, finger_left))
+            penalty_open = 0.0
+            penalty_ground = 0.0
+            finger_right, finger_left = action[7], action[8]
+
+            if dist < 1.0 and angle_err < 0.25:
+                # reward closing
+                reward_finger = 5.0 * (max(0.0, finger_right) + max(0.0, finger_left))
+                # penalize NOT closing
+                penalty_open = -2.0 * (
+                    max(0.0, -finger_right) + max(0.0, -finger_left)
+                )
+            else:
+                if gripper_pos[2] < 0.3:
+                    penalty_ground = -10.0 * (0.3 - gripper_pos[2])
 
             # 2. Contact bonus (actual grasp)
             has_contact = self._finger_cube_contact()
             reward_contact = 0.0
             if has_contact:
-                reward_contact = 25.0
+                reward_contact = 10.0
+                if finger_right > 0.5 and finger_left > 0.5:
+                    reward_contact += 15.0
 
-            reward_grasp = reward_finger + reward_contact
+            reward_grasp = reward_finger + reward_contact + penalty_open + penalty_ground
 
             # --- 6. LIFTING ---
             reward_pick = 0.0
-            has_contact = self._finger_cube_contact()
             if has_contact:
                 reward_pick += 1.0
                 if cube_pos[2] > 0.03:
@@ -124,8 +139,9 @@ class GoogleRobotPickPlaceEnv(gym.Env):
                 reward_align +
                 reward_grasp +
                 reward_pick +
-                reward_dist_penalty
+                penalty_dist
             )
+
             # 4. Termination / Truncation
             terminated = False 
             if cube_pos[2] < -0.05 or np.linalg.norm(cube_pos[:2]) > 1.0:
