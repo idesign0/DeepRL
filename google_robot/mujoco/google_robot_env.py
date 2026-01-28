@@ -71,7 +71,7 @@ class GoogleRobotPickPlaceEnv(gym.Env):
             r_err = R.from_matrix(target_mat.T @ gripper_mat)
             angle_err = np.linalg.norm(r_err.as_rotvec())
 
-            # --- 1. PROGRESS REWARD (MAIN DRIVER) ---
+            # --- PROGRESS REWARD (MAIN DRIVER) ---
             if getattr(self, 'prev_dist', None) is None:
                 self.prev_dist = dist
 
@@ -83,32 +83,28 @@ class GoogleRobotPickPlaceEnv(gym.Env):
             reward_progress = 30.0 * progress_dist + 30.0 * progress_ang
             self.prev_dist = dist
             self.prev_ang = angle_err
-
-            if dist < 0.25:
-                reward_progress *= 0.5
             
-            # --- 2. REACH (NON-SATURATING) ---
-            reward_reach = 1.5 / (dist + 0.05)
-
-            # --- 3. ALIGN (ONLY WHEN CLOSE) ---
-            reward_align = 0.0
             if dist < 1.0:
-                reward_align = 3.0*np.exp(-angle_err)
+                # reduce progress reward once grasping starts
+                reward_progress *= 0.2
 
-            # --- 4. SOFT DISTANCE PENALTY ---
+            # --- REACH (NON-SATURATING) ---
+            reward_reach = 1.5 / (dist + 0.05)
+            reward_align = 0.0
+            reward_align = 3.0*np.exp(-angle_err)
             penalty_dist = -0.5 * dist * dist
 
-            # --- 5. GRASPING ---
+            # --- GRASPING ---
             reward_finger = 0.0
             penalty_open = 0.0
             penalty_ground = 0.0
             finger_right, finger_left = action[7], action[8]
 
-            if dist < 1.0 and angle_err < 0.25:
+            if dist < 0.1:  # slightly larger reach
                 # reward closing
                 reward_finger = 5.0 * (max(0.0, finger_right) + max(0.0, finger_left))
                 # penalize NOT closing
-                penalty_open = -2.0 * (
+                penalty_open = -3.0 * (
                     max(0.0, -finger_right) + max(0.0, -finger_left)
                 )
             else:
