@@ -84,64 +84,61 @@ class GoogleRobotPickPlaceEnv(gym.Env):
             self.prev_dist = dist
             self.prev_ang = angle_err
             
-            if dist < 1.25:
+            if dist < 3.0:
                 # reduce progress reward once grasping starts
                 progress_dist *= 0.2
 
             # --- REACH (NON-SATURATING) ---
-            reward_reach = 3.0 / (dist + 0.05) + 30.0 * progress_dist 
+            reward_reach = 5.0 / (dist + 0.05) + 30.0 * progress_dist 
             # Distance-aware angular shaping
-            dist_weight = np.clip(1.5 - dist, 0.0, 1.0)  # starts mattering around dist ≈ 1.5
-            reward_align = dist_weight * (5.0 / (angle_err + 0.05)) + 20.0 * progress_ang
-            penalty_dist = -0.5 * dist * dist
-
-            # --- Z MISALIGN PENALTY ---
-            xy_offset = np.linalg.norm(dist_err_vec[:2])
-            # z misalignment penalty
-            z_misalign_penalty = -50.0 * np.clip(xy_offset - 0.03, 0.0, 0.1)
+            dist_weight = np.clip(3.0 - dist, 0.0, 1.0)  # starts mattering around dist ≈ 1.5
+            reward_align = dist_weight * (5.0 / (angle_err + 0.5)) + 10.0 * progress_ang
+            penalty_dist = -5 * dist * dist
 
             # --- GRASPING ---
             reward_finger = 0.0
-            penalty_open = 0.0
+            reward_contact = 0.0
             penalty_ground = 0.0
             finger_right, finger_left = action[7], action[8]
 
-            if dist < 0.5:
-                # reward closing
-                reward_finger = 5.0 * (max(0.0, finger_right) + max(0.0, finger_left))
-                # penalize NOT closing
-                penalty_open = -3.0 * (
-                    max(0.0, -finger_right) + max(0.0, -finger_left)
-                )
+            # Gripper approach direction (Z axis of gripper)
+            gripper_z = gripper_mat[:, 2]          # local Z
+            cube_z = np.array([0, 0, 1])            # world up
+
+            # Want gripper Z to point DOWN
+            approach_alignment = np.dot(gripper_z, -cube_z)  # ∈ [-1, 1]
+            approach_weight = np.clip(2.0 - dist, 0.0, 1.0)
+            reward_approach = approach_weight * 2.0 * np.clip(approach_alignment, 0.0, 1.0)
+            height_above_cube = gripper_pos[2] - cube_pos[2]
+
+            if  0.05 < height_above_cube < 0.2 and approach_alignment == 1.0:
+                reward_finger = 10.0 * (max(0.0, finger_right) + max(0.0, finger_left))
+                # 2. Contact bonus (actual grasp)
+                has_contact = self._finger_cube_contact()
+                reward_contact = 0.0
+                if has_contact:
+                    reward_contact = 10.0
+                    if finger_right > 0.5 and finger_left > 0.5:
+                        reward_contact += 15.0
             else:
                 if gripper_pos[2] < 0.3:
                     penalty_ground = -10.0 * (0.3 - gripper_pos[2])
 
-            # 2. Contact bonus (actual grasp)
-            has_contact = self._finger_cube_contact()
-            reward_contact = 0.0
-            if has_contact and xy_offset < 0.05:
-                reward_contact = 10.0
-                if finger_right > 0.5 and finger_left > 0.5:
-                    reward_contact += 15.0
+            reward_grasp = reward_finger + reward_contact + reward_approach + penalty_ground + penalty_dist
 
-            reward_grasp = reward_finger + reward_contact + penalty_open + penalty_ground + z_misalign_penalty
-
-            # --- 6. LIFTING ---
-            reward_pick = 0.0
-            if has_contact:
-                reward_pick += 1.0
-                if cube_pos[2] > 0.03:
-                    reward_pick += 10.0 + 40.0 * cube_pos[2]
+            # # --- 6. LIFTING ---
+            # reward_pick = 0.0
+            # if has_contact:
+            #     reward_pick += 1.0
+            #     if cube_pos[2] > 0.03:
+            #         reward_pick += 10.0 + 40.0 * cube_pos[2]
 
             # --- TOTAL ---
             reward = (
                 reward_reach +
                 reward_align +
-                reward_grasp +
-                reward_pick +
-                penalty_dist
-            )
+                reward_grasp 
+                )
 
             # 4. Termination / Truncation
             terminated = False 
