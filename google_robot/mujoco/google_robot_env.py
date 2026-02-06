@@ -111,7 +111,7 @@ class GoogleRobotPickPlaceEnv(gym.Env):
             reward_approach = approach_weight * 2.0 * np.clip(approach_alignment, 0.0, 1.0)
             height_above_cube = gripper_pos[2] - cube_pos[2]
 
-            if  0.05 < height_above_cube < 0.2 and approach_alignment == 1.0:
+            if  0.1 < height_above_cube < 0.3 and approach_alignment > 0.8:
                 reward_finger = 10.0 * (max(0.0, finger_right) + max(0.0, finger_left))
                 # 2. Contact bonus (actual grasp)
                 has_contact = self._finger_cube_contact()
