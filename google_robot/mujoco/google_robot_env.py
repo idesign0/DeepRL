@@ -91,7 +91,7 @@ class GoogleRobotPickPlaceEnv(gym.Env):
             # --- REACH (NON-SATURATING) ---
             reward_reach = 5.0 / (dist + 0.05) + 30.0 * progress_dist 
             # Distance-aware angular shaping
-            dist_weight = np.clip(3.0 - dist, 0.0, 1.0)  # starts mattering around dist ≈ 1.5
+            dist_weight = np.clip(3.0 - dist, 0.0, 1.0)  # starts mattering around dist ≈ 3.0
             reward_align = dist_weight * (5.0 / (angle_err + 0.5)) + 10.0 * progress_ang
             penalty_dist = -5 * dist * dist
 
@@ -111,8 +111,8 @@ class GoogleRobotPickPlaceEnv(gym.Env):
             reward_approach = approach_weight * 2.0 * np.clip(approach_alignment, 0.0, 1.0)
             height_above_cube = gripper_pos[2] - cube_pos[2]
 
-            if  0.1 < height_above_cube < 0.3 and approach_alignment > 0.8:
-                reward_finger = 10.0 * (max(0.0, finger_right) + max(0.0, finger_left))
+            if  dist < 0.3 and height_above_cube < 0.1 and approach_alignment > 0.9:
+                reward_finger = 15.0 * (max(0.0, finger_right) + max(0.0, finger_left))
                 # 2. Contact bonus (actual grasp)
                 has_contact = self._finger_cube_contact()
                 reward_contact = 0.0
@@ -158,8 +158,8 @@ class GoogleRobotPickPlaceEnv(gym.Env):
         cube_qpos_adr = int(self.model.joint("cube_joint").qposadr)  # safer: ensure int
 
         # spawn coordinates (x, y, z)
-        far_x = 0.2 + np.random.uniform(0, 0.2)   # X: 0.2 → 0.4
-        random_y = -0.5 + np.random.uniform(0, 0.4)  # Y: -0.2 → 0.2
+        far_x = np.random.uniform(-0.5, 0.5)   # X: -0.5 → 0.5
+        random_y = np.random.uniform(-0.5, -0.3)  # Y: -0.6 → -0.3
         z = 0.02
 
         # For a free joint we must set 7 values: tx, ty, tz, qw, qx, qy, qz
